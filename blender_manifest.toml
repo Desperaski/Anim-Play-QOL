@@ -1,0 +1,18 @@
+schema_version = "1.0.0"
+
+id = "anim_play_qol"
+version = "1.0.0"
+name = "Anim Play QOL"
+tagline = "Auto-fit timeline range and smart Loop playback control"
+maintainer = "Desperaski"
+type = "add-on"
+
+website = "https://github.com/Desperaski/Anim-Play-QOL"
+
+tags = ["Animation", "User Interface"]
+
+blender_version_min = "4.2.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
