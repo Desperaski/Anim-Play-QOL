@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "anim_play_qol"
-version = "1.0.0"
+version = "1.1.0"
 name = "Anim Play QOL"
 tagline = "Auto-fit timeline range and smart Loop playback control"
 maintainer = "Desperaski"

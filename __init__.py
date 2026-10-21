@@ -1,22 +1,17 @@
 import bpy
-from bpy.props import BoolProperty, PointerProperty, StringProperty
-from bpy.types import Panel, PropertyGroup, Menu
+from bpy.props import BoolProperty, PointerProperty, StringProperty, CollectionProperty, IntProperty
+from bpy.types import Panel, PropertyGroup, UIList
 
 _last_signature = ""
 
 def get_action_range(action, use_manual=False):
-    # Если галочка Prefer Manual Range ВКЛЮЧЕНА, и в экшене включен мануал
     if use_manual and getattr(action, "use_frame_range", False):
         return int(action.frame_start), int(action.frame_end)
     
-    # Во всех остальных случаях берем РЕАЛЬНЫЕ ключи.
-    # Используем curve_frame_range, так как frame_range в Blender 5.2
-    # возвращает мануальные значения, если они включены.
     try:
         start = int(action.curve_frame_range[0])
         end = int(action.curve_frame_range[1])
     except Exception:
-        # Фоллбэк на всякий случай
         try:
             start = int(action.frame_range[0])
             end = int(action.frame_range[1])
@@ -27,34 +22,55 @@ def get_action_range(action, use_manual=False):
 
 def force_update_range(self, context):
     global _last_signature
-    _last_signature = ""  # Сбрасываем кэш
+    _last_signature = ""
     
     scene = context.scene
     props = scene.animqol_props
     obj = props.target_object
     
-    # 1. Если выключили автофит -> ставим дефолт и уходим
     if not props.auto_fit_range:
         scene.frame_start = 1
         scene.frame_end = 250
         scene.frame_set(1)
         return
 
-    # 2. Если автофит включен, но объекта/экшена нет - ничего не делаем
     if not (obj and obj.animation_data and obj.animation_data.action):
         return
 
     action = obj.animation_data.action
-    
-    # 3. Считаем диапазон
     start, end = get_action_range(action, props.use_manual_range)
     
-    # 4. Применяем
     if scene.frame_start != start or scene.frame_end != end:
         scene.frame_start = start
         scene.frame_end = end
         scene.frame_set(scene.frame_current)
 
+class AnimPlayActionItem(PropertyGroup):
+    name: StringProperty()
+
+# --- Обновление при клике на элемент списка ---
+def update_selected_action(self, context):
+    props = context.scene.animqol_props
+    obj = props.target_object
+    
+    if obj and obj.animation_data and props.action_list_index >= 0:
+        if props.action_list_index < len(props.action_list):
+            action_name = props.action_list[props.action_list_index].name
+            act = bpy.data.actions.get(action_name)
+            if act:
+                obj.animation_data.action = act
+                # Закрываем окно (если оно открыто)
+                for window in context.window_manager.windows:
+                    for area in window.screen.areas:
+                        if area.type == 'VIEW_3D':
+                            area.tag_redraw()
+
+# --- UIList ---
+class ANIMQOL_UL_action_list(UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        layout.label(text=item.name, icon='ACTION')
+
+# --- Свойства ---
 class AnimPlayProps(PropertyGroup):
     target_object: PointerProperty(
         name="Target Object",
@@ -62,46 +78,45 @@ class AnimPlayProps(PropertyGroup):
         poll=lambda self, obj: obj.type == 'ARMATURE' and obj.animation_data is not None,
         description="Select the armature to view animations"
     )
-    loop_enabled: BoolProperty(
-        name="Loop Animation", 
-        default=True,
-        description="Loop the playback. If disabled, stops at the end and resets"
-    )
+    loop_enabled: BoolProperty(name="Loop Animation", default=True)
+    auto_fit_range: BoolProperty(name="Auto-fit Range", default=True, update=force_update_range)
+    use_manual_range: BoolProperty(name="Prefer Manual Range", default=True, update=force_update_range)
     
-    auto_fit_range: BoolProperty(
-        name="Auto-fit Range", 
-        default=True,
-        update=force_update_range,
-        description="Automatically adjust the scene timeline to match the action length"
-    )
-    
-    use_manual_range: BoolProperty(
-        name="Prefer Manual Range", 
-        default=True,
-        update=force_update_range,
-        description="Use the action's Manual Frame Range if it is enabled"
-    )
+    search_text: StringProperty(name="Search", default="")
+    action_list: CollectionProperty(type=AnimPlayActionItem)
+    # Добавляем update-колбэк для мгновенного применения
+    action_list_index: IntProperty(default=0, update=update_selected_action)
 
-class ANIMQOL_OT_set_action(bpy.types.Operator):
-    bl_idname = "animqol.set_action"
-    bl_label = "Set Action"
-    bl_description = "Assign the selected action to the armature"
-    
-    action_name: StringProperty()
+# --- Оператор обновления списка ---
+class ANIMQOL_OT_refresh_list(bpy.types.Operator):
+    bl_idname = "animqol.refresh_list"
+    bl_label = "Refresh List"
 
     def execute(self, context):
         props = context.scene.animqol_props
+        props.action_list.clear()
+        search_lower = props.search_text.lower()
+        
+        for action in bpy.data.actions:
+            if search_lower in action.name.lower():
+                item = props.action_list.add()
+                item.name = action.name
+                
+        # Восстанавливаем фокус на текущем экшене, если он в списке
         obj = props.target_object
-        if obj and obj.animation_data:
-            act = bpy.data.actions.get(self.action_name)
-            if act:
-                obj.animation_data.action = act
+        if obj and obj.animation_data and obj.animation_data.action:
+            current_name = obj.animation_data.action.name
+            for i, item in enumerate(props.action_list):
+                if item.name == current_name:
+                    props.action_list_index = i
+                    break
+                    
         return {'FINISHED'}
 
+# --- Оператор отвязки ---
 class ANIMQOL_OT_unlink_action(bpy.types.Operator):
     bl_idname = "animqol.unlink_action"
     bl_label = "Unlink Action"
-    bl_description = "Unlink the active action from the armature"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -111,16 +126,47 @@ class ANIMQOL_OT_unlink_action(bpy.types.Operator):
             obj.animation_data.action = None
         return {'FINISHED'}
 
-class ANIMQOL_MT_action_menu(Menu):
-    bl_label = "Action Menu"
-    bl_idname = "ANIMQOL_MT_action_menu"
-    bl_description = "Click to choose an action from all animations in the file"
+# --- Окно поиска ---
+class ANIMQOL_OT_search_window(bpy.types.Operator):
+    bl_idname = "animqol.search_window"
+    bl_label = "Search Action"
+
+    def invoke(self, context, event):
+        props = context.scene.animqol_props
+        
+        # 1. Принудительно собираем список при открытии
+        props.action_list.clear()
+        for action in bpy.data.actions:
+            item = props.action_list.add()
+            item.name = action.name
+            
+        # 2. Ищем текущий экшен и ставим на него фокус
+        obj = props.target_object
+        if obj and obj.animation_data and obj.animation_data.action:
+            current_name = obj.animation_data.action.name
+            for i, item in enumerate(props.action_list):
+                if item.name == current_name:
+                    props.action_list_index = i
+                    break
+
+        return context.window_manager.invoke_props_dialog(self, width=400)
 
     def draw(self, context):
         layout = self.layout
-        for action in bpy.data.actions:
-            op = layout.operator("animqol.set_action", text=action.name)
-            op.action_name = action.name
+        props = context.scene.animqol_props
+        
+        row = layout.row(align=True)
+        row.prop(props, "search_text", text="")
+        row.operator("animqol.refresh_list", text="", icon='FILE_REFRESH')
+        
+        layout.separator()
+        
+        # Отрисовка списка. Клик по нему меняет action_list_index, 
+        # что вызывает update_selected_action и применяет экшен.
+        layout.template_list("ANIMQOL_UL_action_list", "", props, "action_list", props, "action_list_index", rows=10)
+
+    def execute(self, context):
+        return {'FINISHED'}
 
 def update_frame_range_from_action(scene, depsgraph):
     global _last_signature
@@ -176,8 +222,9 @@ class ANIMQOL_PT_main_panel(Panel):
             act = obj.animation_data.action
             
             row = layout.row(align=True)
-            menu_text = act.name if act else "Select Action"
-            row.menu("ANIMQOL_MT_action_menu", text=menu_text, icon='ACTION')
+            menu_text = act.name if act else "Search Action..."
+            
+            row.operator("animqol.search_window", text=menu_text, icon='VIEWZOOM')
             
             if act:
                 row.operator("animqol.unlink_action", text="", icon='X')
@@ -213,10 +260,12 @@ class ANIMQOL_PT_main_panel(Panel):
                 row.label(text=range_text, icon='PREVIEW_RANGE')
 
 classes = (
+    AnimPlayActionItem,
+    ANIMQOL_UL_action_list,
     AnimPlayProps,
-    ANIMQOL_OT_set_action,
+    ANIMQOL_OT_refresh_list,
     ANIMQOL_OT_unlink_action,
-    ANIMQOL_MT_action_menu,
+    ANIMQOL_OT_search_window,
     ANIMQOL_PT_main_panel,
 )
 
