@@ -14,6 +14,7 @@
    - **Prefer Manual Range** — If enabled in the Action Editor, the addon will use the manual frame range set for the action instead of the real keyframe bounds.
    - **Play/Pause Button** — Playback button right in the panel, so you don't have to reach for the spacebar.
    - **Action Info** — Shows the current active action, its frame range, and whether Manual Range is being used.
+   > ⚠️ **Limitation:** Multiple objects playing actions of different lengths at the same time is not supported/tested. The timeline fits to a single action.
 
 ## Installation
    1. Go to the **Releases** section on the right side of this GitHub repository page.
